@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Bedrock OpenAI Proxy - OpenAI-compatible API for AWS Bedrock'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+  
+  DomainName:
+    Type: String
+    Default: ''
+    Description: Custom domain name (optional)
+  
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM Certificate ARN for custom domain (optional)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+        AWS_REGION: !Ref AWS::Region
+
+Resources:
+  # Lambda Function
+  BedrockOpenAIProxyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bedrock-openai-proxy-${Environment}'
+      CodeUri: dist/
+      Handler: index.handler
+      Description: 'OpenAI-compatible API proxy for AWS Bedrock'
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:GetParameters
+                - ssm:GetParametersByPath
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bedrock-openai-proxy/*'
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: '*'
+      Events:
+        ChatCompletions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BedrockOpenAIProxyApi
+            Path: /v1/chat/completions
+            Method: post
+        ClaudeMessages:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BedrockOpenAIProxyApi
+            Path: /v1/messages
+            Method: post
+        Models:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BedrockOpenAIProxyApi
+            Path: /v1/models
+            Method: get
+        OptionsAny:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BedrockOpenAIProxyApi
+            Path: /{proxy+}
+            Method: options
+
+  # API Gateway
+  BedrockOpenAIProxyApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'bedrock-openai-proxy-api-${Environment}'
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"
+        MaxAge: "'600'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+  # Custom Domain (conditional)
+  CustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref DomainName
+      CertificateArn: !Ref CertificateArn
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # Base Path Mapping (conditional)
+  BasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Condition: HasCustomDomain
+    Properties:
+      DomainName: !Ref CustomDomain
+      RestApiId: !Ref BedrockOpenAIProxyApi
+      Stage: !Ref Environment
+
+  # Parameter Store entries
+  DomainParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/bedrock-openai-proxy/${Environment}/domain'
+      Type: String
+      Value: !If 
+        - HasCustomDomain
+        - !Ref DomainName
+        - !Sub '${BedrockOpenAIProxyApi}.execute-api.${AWS::Region}.amazonaws.com'
+      Description: 'Domain name for the Bedrock OpenAI Proxy API'
+
+  ModelMappingsParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/bedrock-openai-proxy/${Environment}/model-mappings'
+      Type: String
+      Value: |
+        {
+          "gpt-3.5-turbo": "anthropic.claude-3-haiku-20240307-v1:0",
+          "gpt-4": "anthropic.claude-3-sonnet-20240229-v1:0",
+          "gpt-4-turbo": "anthropic.claude-3-opus-20240229-v1:0",
+          "claude-3-haiku": "anthropic.claude-3-haiku-20240307-v1:0",
+          "claude-3-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0",
+          "claude-3-opus": "anthropic.claude-3-opus-20240229-v1:0"
+        }
+      Description: 'Model mappings from OpenAI model names to Bedrock model IDs'
+
+  AllowedModelsParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/bedrock-openai-proxy/${Environment}/allowed-models'
+      Type: StringList
+      Value: 'anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-sonnet-20240229-v1:0,anthropic.claude-3-opus-20240229-v1:0'
+      Description: 'List of allowed Bedrock model IDs'
+
+  # CloudWatch Log Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bedrock-openai-proxy-${Environment}'
+      RetentionInDays: 14
+
+Conditions:
+  HasCustomDomain: !And
+    - !Not [!Equals [!Ref DomainName, '']]
+    - !Not [!Equals [!Ref CertificateArn, '']]
+
+Outputs:
+  ApiUrl:
+    Description: 'API Gateway endpoint URL'
+    Value: !If
+      - HasCustomDomain
+      - !Sub 'https://${DomainName}/${Environment}'
+      - !Sub 'https://${BedrockOpenAIProxyApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  FunctionArn:
+    Description: 'Lambda Function ARN'
+    Value: !GetAtt BedrockOpenAIProxyFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-FunctionArn'
+
+  ApiId:
+    Description: 'API Gateway ID'
+    Value: !Ref BedrockOpenAIProxyApi
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiId'
