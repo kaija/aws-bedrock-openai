@@ -2,7 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { OpenAIChatCompletionRequest } from '../types';
 import { transformOpenAIToClaude, extractSystemMessage, validateOpenAIRequest } from '../transformers/request';
 import { transformClaudeToOpenAI, createOpenAIErrorResponse } from '../transformers/response';
-import { BedrockService } from '../services/bedrock';
+import { BedrockService, BedrockError } from '../services/bedrock';
 
 export class ChatHandler {
   private bedrockService: BedrockService;
@@ -69,6 +69,13 @@ export class ChatHandler {
 
     } catch (error) {
       console.error('Error in chat completion:', error);
+      
+      // Handle BedrockError specifically
+      if (error instanceof BedrockError) {
+        return this.createErrorResponse(error.statusCode, error.message, error.errorType);
+      }
+      
+      // Handle other errors
       return this.createErrorResponse(500, 'Internal server error');
     }
   }
@@ -117,6 +124,13 @@ export class ChatHandler {
 
     } catch (error) {
       console.error('Error in Claude native request:', error);
+      
+      // Handle BedrockError specifically
+      if (error instanceof BedrockError) {
+        return this.createErrorResponse(error.statusCode, error.message, error.errorType);
+      }
+      
+      // Handle other errors
       return this.createErrorResponse(500, 'Internal server error');
     }
   }
@@ -124,8 +138,12 @@ export class ChatHandler {
   /**
    * Creates an error response
    */
-  private createErrorResponse(statusCode: number, message: string): APIGatewayProxyResult {
-    const errorResponse = createOpenAIErrorResponse(message);
+  private createErrorResponse(
+    statusCode: number, 
+    message: string, 
+    errorType: string = 'api_error'
+  ): APIGatewayProxyResult {
+    const errorResponse = createOpenAIErrorResponse(message, errorType as any);
     
     return {
       statusCode,

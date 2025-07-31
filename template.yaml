@@ -29,7 +29,6 @@ Globals:
     Environment:
       Variables:
         NODE_ENV: !Ref Environment
-        AWS_REGION: !Ref AWS::Region
 
 Resources:
   # Lambda Function
@@ -119,9 +118,10 @@ Resources:
     Properties:
       DomainName: !Ref DomainName
       CertificateArn: !Ref CertificateArn
+      SecurityPolicy: TLS_1_2
       EndpointConfiguration:
         Types:
-          - REGIONAL
+          - EDGE
 
   # Base Path Mapping (conditional)
   BasePathMapping:
@@ -153,20 +153,28 @@ Resources:
         {
           "gpt-3.5-turbo": "anthropic.claude-3-haiku-20240307-v1:0",
           "gpt-4": "anthropic.claude-3-sonnet-20240229-v1:0",
-          "gpt-4-turbo": "anthropic.claude-3-opus-20240229-v1:0",
+          "gpt-4-turbo": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+          "gpt-4o": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+          "claude-instant": "anthropic.claude-instant-v1",
           "claude-3-haiku": "anthropic.claude-3-haiku-20240307-v1:0",
           "claude-3-sonnet": "anthropic.claude-3-sonnet-20240229-v1:0",
-          "claude-3-opus": "anthropic.claude-3-opus-20240229-v1:0"
+          "claude-3-5-sonnet": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+          "claude-3-5-sonnet-v2": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+          "claude-3-7-sonnet": "anthropic.claude-3-7-sonnet-20250219-v1:0",
+          "claude-4-sonnet": "anthropic.claude-sonnet-4-20250514-v1:0",
+          "nova-pro": "amazon.nova-pro-v1:0",
+          "nova-lite": "amazon.nova-lite-v1:0",
+          "nova-micro": "amazon.nova-micro-v1:0"
         }
-      Description: 'Model mappings from OpenAI model names to Bedrock model IDs'
+      Description: 'Model mappings from OpenAI model names to Bedrock model IDs available in ap-northeast-1'
 
   AllowedModelsParameter:
     Type: AWS::SSM::Parameter
     Properties:
       Name: !Sub '/bedrock-openai-proxy/${Environment}/allowed-models'
       Type: StringList
-      Value: 'anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-sonnet-20240229-v1:0,anthropic.claude-3-opus-20240229-v1:0'
-      Description: 'List of allowed Bedrock model IDs'
+      Value: 'anthropic.claude-instant-v1,anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-sonnet-20240229-v1:0,anthropic.claude-3-5-sonnet-20240620-v1:0,anthropic.claude-3-5-sonnet-20241022-v2:0,anthropic.claude-3-7-sonnet-20250219-v1:0,anthropic.claude-sonnet-4-20250514-v1:0,amazon.nova-pro-v1:0,amazon.nova-lite-v1:0,amazon.nova-micro-v1:0'
+      Description: 'List of allowed Bedrock model IDs available in ap-northeast-1'
 
   # CloudWatch Log Group
   LogGroup:
