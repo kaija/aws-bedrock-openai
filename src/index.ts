@@ -1,17 +1,35 @@
 import { APIGatewayProxyHandler, APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { ChatHandler } from './handlers/chat';
+import { ModelsHandler } from './handlers/models';
+import { Logger, createTimer } from './services/logger';
 
 const chatHandler = new ChatHandler();
+const modelsHandler = new ModelsHandler();
 
 /**
  * Main Lambda handler - refactored from sample.ts
  * Maintains backward compatibility while providing modular architecture
  */
-export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEvent, _context): Promise<APIGatewayProxyResult> => {
-  console.log('Received event:', JSON.stringify(event, null, 2));
+export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEvent, context): Promise<APIGatewayProxyResult> => {
+  const requestId = context.awsRequestId;
+  const logger = Logger.withContext(requestId);
+  const timer = createTimer(logger);
 
   const path = event.path;
   const method = event.httpMethod;
+
+  // Extract model from request body for logging
+  let requestModel: string | undefined;
+  try {
+    if (event.body) {
+      const body = JSON.parse(event.body);
+      requestModel = body.model;
+    }
+  } catch {
+    // Ignore parsing errors for logging
+  }
+
+  logger.logRequestStart(method, path, requestModel);
 
   // Handle CORS preflight requests
   if (method === 'OPTIONS') {
@@ -28,33 +46,32 @@ export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEven
 
   // Route requests based on path
   try {
+    let result: APIGatewayProxyResult;
+
     if (path === '/v1/chat/completions' && method === 'POST') {
-      return await chatHandler.handleChatCompletion(event);
+      result = await chatHandler.handleChatCompletion(event, logger);
     } else if (path === '/v1/messages' && method === 'POST') {
       // Claude native format for backward compatibility
-      return await chatHandler.handleClaudeNative(event);
+      result = await chatHandler.handleClaudeNative(event, logger);
     } else if (path === '/v1/models' && method === 'GET') {
-      // TODO: Implement models endpoint in next task
-      return {
+      result = await modelsHandler.handleModelsRequest(event, logger);
+    } else if (path === '/health' && method === 'GET') {
+      // Health check endpoint
+      result = {
         statusCode: 200,
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*'
         },
         body: JSON.stringify({
-          object: 'list',
-          data: [
-            {
-              id: 'anthropic.claude-3-sonnet-20240229-v1:0',
-              object: 'model',
-              created: Math.floor(Date.now() / 1000),
-              owned_by: 'anthropic'
-            }
-          ]
+          status: 'healthy',
+          timestamp: new Date().toISOString(),
+          version: process.env.npm_package_version || '1.0.0',
+          environment: process.env.ENVIRONMENT || 'dev'
         })
       };
     } else {
-      return {
+      result = {
         statusCode: 404,
         headers: {
           'Content-Type': 'application/json',
@@ -68,9 +85,17 @@ export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEven
         })
       };
     }
+
+    // Log request completion
+    const duration = timer.end('API request');
+    logger.logRequestEnd(method, path, result.statusCode, duration, requestModel);
+
+    return result;
+
   } catch (error) {
-    console.error('Unhandled error:', error);
-    return {
+    logger.error('Unhandled error in request handler', error);
+
+    const errorResult = {
       statusCode: 500,
       headers: {
         'Content-Type': 'application/json',
@@ -83,5 +108,10 @@ export const handler: APIGatewayProxyHandler = async (event: APIGatewayProxyEven
         }
       })
     };
+
+    const duration = timer.end('API request (error)');
+    logger.logRequestEnd(method, path, errorResult.statusCode, duration, requestModel);
+
+    return errorResult;
   }
 };

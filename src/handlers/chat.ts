@@ -3,6 +3,8 @@ import { OpenAIChatCompletionRequest } from '../types';
 import { transformOpenAIToClaude, extractSystemMessage, validateOpenAIRequest } from '../transformers/request';
 import { transformClaudeToOpenAI, createOpenAIErrorResponse } from '../transformers/response';
 import { BedrockService, BedrockError } from '../services/bedrock';
+import { authenticateRequest } from '../services/auth';
+import { detectProvider, Provider } from '../services/provider';
 
 export class ChatHandler {
   private bedrockService: BedrockService;
@@ -14,15 +16,21 @@ export class ChatHandler {
   /**
    * Handles chat completion requests
    */
-  async handleChatCompletion(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  async handleChatCompletion(event: APIGatewayProxyEvent, logger?: any): Promise<APIGatewayProxyResult> {
     try {
+      // Authenticate request
+      const authResult = await authenticateRequest(event, logger);
+      if (!authResult.isValid) {
+        return this.createErrorResponse(401, authResult.error || 'Authentication failed', 'authentication_error');
+      }
+
       // Parse request body
       if (!event.body) {
         return this.createErrorResponse(400, 'Missing request body');
       }
 
       const body: OpenAIChatCompletionRequest = JSON.parse(event.body);
-      
+
       // Validate request
       const validation = validateOpenAIRequest(body);
       if (!validation.isValid) {
@@ -47,14 +55,46 @@ export class ChatHandler {
         body.top_k || 250
       );
 
-      // Map model ID
-      const modelId = this.bedrockService.mapModelId(body.model);
+      // Detect provider and get model mapping
+      const providerResult = await detectProvider(body.model, undefined, logger);
+
+      // Currently only support Bedrock provider
+      if (providerResult.provider !== Provider.BEDROCK) {
+        return this.createErrorResponse(
+          400,
+          `Provider ${providerResult.provider} is not yet supported. Currently only AWS Bedrock is supported.`,
+          'invalid_request_error'
+        );
+      }
+
+      // Create Bedrock service with authenticated API token
+      const bedrockService = new BedrockService(undefined, authResult.bedrockApiToken);
+
+      // Log model invocation
+      if (logger) {
+        logger.info('Model invocation started', {
+          originalModel: body.model,
+          mappedModel: providerResult.modelId,
+          provider: providerResult.provider,
+          confidence: providerResult.confidence
+        });
+      }
 
       // Invoke Bedrock
-      const claudeResponse = await this.bedrockService.invokeModel(modelId, claudeRequest);
+      const claudeResponse = await bedrockService.invokeModel(providerResult.modelId, claudeRequest);
 
       // Transform response
-      const openaiResponse = transformClaudeToOpenAI(claudeResponse);
+      const openaiResponse = transformClaudeToOpenAI(claudeResponse, body.model);
+
+      // Log successful completion
+      if (logger) {
+        logger.logModelInvocation(
+          providerResult.modelId,
+          providerResult.provider,
+          openaiResponse.usage.prompt_tokens,
+          openaiResponse.usage.completion_tokens
+        );
+      }
 
       return {
         statusCode: 200,
@@ -69,12 +109,12 @@ export class ChatHandler {
 
     } catch (error) {
       console.error('Error in chat completion:', error);
-      
+
       // Handle BedrockError specifically
       if (error instanceof BedrockError) {
         return this.createErrorResponse(error.statusCode, error.message, error.errorType);
       }
-      
+
       // Handle other errors
       return this.createErrorResponse(500, 'Internal server error');
     }
@@ -83,8 +123,14 @@ export class ChatHandler {
   /**
    * Handles Claude-native requests (for backward compatibility)
    */
-  async handleClaudeNative(event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  async handleClaudeNative(event: APIGatewayProxyEvent, logger?: any): Promise<APIGatewayProxyResult> {
     try {
+      // Authenticate request
+      const authResult = await authenticateRequest(event, logger);
+      if (!authResult.isValid) {
+        return this.createErrorResponse(401, authResult.error || 'Authentication failed', 'authentication_error');
+      }
+
       if (!event.body) {
         return this.createErrorResponse(400, 'Missing request body');
       }
@@ -108,8 +154,21 @@ export class ChatHandler {
         body.top_k || 250
       );
 
-      const modelId = this.bedrockService.mapModelId(body.model);
-      const claudeResponse = await this.bedrockService.invokeModel(modelId, claudeRequest);
+      // Detect provider and get model mapping
+      const providerResult = await detectProvider(body.model, undefined, logger);
+
+      // Currently only support Bedrock provider
+      if (providerResult.provider !== Provider.BEDROCK) {
+        return this.createErrorResponse(
+          400,
+          `Provider ${providerResult.provider} is not yet supported. Currently only AWS Bedrock is supported.`,
+          'invalid_request_error'
+        );
+      }
+
+      // Create Bedrock service with authenticated API token
+      const bedrockService = new BedrockService(undefined, authResult.bedrockApiToken);
+      const claudeResponse = await bedrockService.invokeModel(providerResult.modelId, claudeRequest);
 
       return {
         statusCode: 200,
@@ -124,12 +183,12 @@ export class ChatHandler {
 
     } catch (error) {
       console.error('Error in Claude native request:', error);
-      
+
       // Handle BedrockError specifically
       if (error instanceof BedrockError) {
         return this.createErrorResponse(error.statusCode, error.message, error.errorType);
       }
-      
+
       // Handle other errors
       return this.createErrorResponse(500, 'Internal server error');
     }
@@ -139,12 +198,12 @@ export class ChatHandler {
    * Creates an error response
    */
   private createErrorResponse(
-    statusCode: number, 
-    message: string, 
+    statusCode: number,
+    message: string,
     errorType: string = 'api_error'
   ): APIGatewayProxyResult {
     const errorResponse = createOpenAIErrorResponse(message, errorType as any);
-    
+
     return {
       statusCode,
       headers: {

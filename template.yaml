@@ -18,19 +18,48 @@ Parameters:
     Type: String
     Default: ''
     Description: ACM Certificate ARN for custom domain (optional)
+  
+  EnableLogging:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable API Gateway logging (requires CloudWatch Logs role)
 
 Globals:
   Function:
-    Timeout: 30
-    MemorySize: 512
+    Timeout: 60
+    MemorySize: 1024
     Runtime: nodejs22.x
     Architectures:
       - arm64
     Environment:
       Variables:
         NODE_ENV: !Ref Environment
+        LOG_LEVEL: !If [IsProduction, 'INFO', 'DEBUG']
 
 Resources:
+  # API Gateway CloudWatch Role (conditional)
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Condition: LoggingEnabled
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  # API Gateway Account (sets the CloudWatch role)
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Condition: LoggingEnabled
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
   # Lambda Function
   BedrockOpenAIProxyFunction:
     Type: AWS::Serverless::Function
@@ -42,6 +71,7 @@ Resources:
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
+      ReservedConcurrentExecutions: !If [IsProduction, 100, 10]
       Policies:
         - Version: '2012-10-17'
           Statement:
@@ -69,17 +99,32 @@ Resources:
             RestApiId: !Ref BedrockOpenAIProxyApi
             Path: /v1/chat/completions
             Method: post
+            RequestParameters:
+              - method.request.header.Authorization:
+                  Required: true
         ClaudeMessages:
           Type: Api
           Properties:
             RestApiId: !Ref BedrockOpenAIProxyApi
             Path: /v1/messages
             Method: post
+            RequestParameters:
+              - method.request.header.Authorization:
+                  Required: true
         Models:
           Type: Api
           Properties:
             RestApiId: !Ref BedrockOpenAIProxyApi
             Path: /v1/models
+            Method: get
+            RequestParameters:
+              - method.request.header.Authorization:
+                  Required: true
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BedrockOpenAIProxyApi
+            Path: /health
             Method: get
         OptionsAny:
           Type: Api
@@ -94,22 +139,107 @@ Resources:
     Properties:
       Name: !Sub 'bedrock-openai-proxy-api-${Environment}'
       StageName: !Ref Environment
+      TracingEnabled: true
+      MethodSettings: !If
+        - LoggingEnabled
+        - - ResourcePath: '/*'
+            HttpMethod: '*'
+            LoggingLevel: !If [IsProduction, 'ERROR', 'INFO']
+            DataTraceEnabled: !If [IsProduction, false, true]
+            MetricsEnabled: true
+            ThrottlingRateLimit: !If [IsProduction, 1000, 100]
+            ThrottlingBurstLimit: !If [IsProduction, 2000, 200]
+        - - ResourcePath: '/*'
+            HttpMethod: '*'
+            MetricsEnabled: true
+            ThrottlingRateLimit: !If [IsProduction, 1000, 100]
+            ThrottlingBurstLimit: !If [IsProduction, 2000, 200]
+      AccessLogSetting: !If
+        - LoggingEnabled
+        - DestinationArn: !GetAtt ApiGatewayLogGroup.Arn
+          Format: !Sub |
+            {
+              "requestId": "$context.requestId",
+              "requestTime": "$context.requestTime",
+              "httpMethod": "$context.httpMethod",
+              "resourcePath": "$context.resourcePath",
+              "status": "$context.status",
+              "responseLength": "$context.responseLength",
+              "responseTime": "$context.responseTime",
+              "userAgent": "$context.identity.userAgent",
+              "sourceIp": "$context.identity.sourceIp",
+              "error": "$context.error.message",
+              "integrationError": "$context.integration.error"
+            }
+        - !Ref AWS::NoValue
       Cors:
-        AllowMethods: "'GET,POST,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+        AllowMethods: "'GET,POST,OPTIONS,HEAD'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
         AllowOrigin: "'*'"
-        MaxAge: "'600'"
+        MaxAge: "'86400'"
+        AllowCredentials: false
       GatewayResponses:
         DEFAULT_4XX:
           ResponseParameters:
             Headers:
               Access-Control-Allow-Origin: "'*'"
-              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Requested-With'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS,HEAD'"
+          ResponseTemplates:
+            application/json: |
+              {
+                "error": {
+                  "message": "$context.error.messageString",
+                  "type": "api_error",
+                  "code": "$context.error.responseType"
+                }
+              }
         DEFAULT_5XX:
           ResponseParameters:
             Headers:
               Access-Control-Allow-Origin: "'*'"
-              Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Requested-With'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS,HEAD'"
+          ResponseTemplates:
+            application/json: |
+              {
+                "error": {
+                  "message": "Internal server error",
+                  "type": "api_error",
+                  "code": "internal_error"
+                }
+              }
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Requested-With'"
+          ResponseTemplates:
+            application/json: |
+              {
+                "error": {
+                  "message": "Invalid authentication credentials",
+                  "type": "authentication_error",
+                  "code": "invalid_api_key"
+                }
+              }
+        THROTTLED:
+          StatusCode: 429
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Requested-With'"
+              Retry-After: "'60'"
+          ResponseTemplates:
+            application/json: |
+              {
+                "error": {
+                  "message": "Rate limit exceeded. Please try again later.",
+                  "type": "rate_limit_exceeded",
+                  "code": "rate_limit_exceeded"
+                }
+              }
 
   # Custom Domain (conditional)
   CustomDomain:
@@ -176,17 +306,143 @@ Resources:
       Value: 'anthropic.claude-instant-v1,anthropic.claude-3-haiku-20240307-v1:0,anthropic.claude-3-sonnet-20240229-v1:0,anthropic.claude-3-5-sonnet-20240620-v1:0,anthropic.claude-3-5-sonnet-20241022-v2:0,anthropic.claude-3-7-sonnet-20250219-v1:0,anthropic.claude-sonnet-4-20250514-v1:0,amazon.nova-pro-v1:0,amazon.nova-lite-v1:0,amazon.nova-micro-v1:0'
       Description: 'List of allowed Bedrock model IDs available in ap-northeast-1'
 
-  # CloudWatch Log Group
+  ProviderConfigParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/bedrock-openai-proxy/${Environment}/provider-config'
+      Type: String
+      Value: |
+        {
+          "bedrock": {
+            "region": "ap-northeast-1",
+            "enabled": true
+          },
+          "openai": {
+            "enabled": false
+          },
+          "gemini": {
+            "enabled": false
+          }
+        }
+      Description: 'Provider configuration for multi-provider support'
+
+  DefaultProviderParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub '/bedrock-openai-proxy/${Environment}/default-provider'
+      Type: String
+      Value: 'bedrock'
+      Description: 'Default provider when model mapping is ambiguous'
+
+
+
+  # CloudWatch Log Groups
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/bedrock-openai-proxy-${Environment}'
-      RetentionInDays: 14
+      RetentionInDays: !If [IsProduction, 30, 14]
+
+  ApiGatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: LoggingEnabled
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/bedrock-openai-proxy-${Environment}'
+      RetentionInDays: !If [IsProduction, 30, 14]
+
+  # CloudWatch Alarms
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bedrock-openai-proxy-${Environment}-error-rate'
+      AlarmDescription: 'High error rate for Bedrock OpenAI Proxy'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BedrockOpenAIProxyFunction
+      TreatMissingData: notBreaching
+
+  DurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bedrock-openai-proxy-${Environment}-duration'
+      AlarmDescription: 'High duration for Bedrock OpenAI Proxy'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BedrockOpenAIProxyFunction
+      TreatMissingData: notBreaching
+
+  ThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bedrock-openai-proxy-${Environment}-throttles'
+      AlarmDescription: 'Lambda function throttles for Bedrock OpenAI Proxy'
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BedrockOpenAIProxyFunction
+      TreatMissingData: notBreaching
+
+  # API Gateway Alarms
+  ApiGateway4XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bedrock-openai-proxy-${Environment}-4xx-errors'
+      AlarmDescription: 'High 4XX error rate for API Gateway'
+      MetricName: 4XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bedrock-openai-proxy-api-${Environment}'
+      TreatMissingData: notBreaching
+
+  ApiGateway5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'bedrock-openai-proxy-${Environment}-5xx-errors'
+      AlarmDescription: 'High 5XX error rate for API Gateway'
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'bedrock-openai-proxy-api-${Environment}'
+      TreatMissingData: notBreaching
 
 Conditions:
   HasCustomDomain: !And
     - !Not [!Equals [!Ref DomainName, '']]
     - !Not [!Equals [!Ref CertificateArn, '']]
+  IsProduction: !Equals [!Ref Environment, 'prod']
+  LoggingEnabled: !Equals [!Ref EnableLogging, 'true']
 
 Outputs:
   ApiUrl:
@@ -209,3 +465,22 @@ Outputs:
     Value: !Ref BedrockOpenAIProxyApi
     Export:
       Name: !Sub '${AWS::StackName}-ApiId'
+
+  LogGroupName:
+    Description: 'CloudWatch Log Group Name'
+    Value: !Ref LogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-LogGroup'
+
+  CustomDomainName:
+    Condition: HasCustomDomain
+    Description: 'Custom Domain Name'
+    Value: !Ref CustomDomain
+    Export:
+      Name: !Sub '${AWS::StackName}-CustomDomain'
+
+  Environment:
+    Description: 'Deployment Environment'
+    Value: !Ref Environment
+    Export:
+      Name: !Sub '${AWS::StackName}-Environment'

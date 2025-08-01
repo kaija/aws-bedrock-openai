@@ -12,7 +12,7 @@ This feature implements an OpenAI-compatible API proxy that translates OpenAI AP
 
 #### Acceptance Criteria
 
-1. WHEN a user sets OPENAI_API_KEY=$AWS_BEARER_TOKEN_BEDROCK and OPENAI_API_BASE=https://openai.${domain}/v1 THEN the system SHALL accept requests from OpenAI client libraries
+1. WHEN a user sets Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK and OPENAI_API_BASE=https://openai.${domain}/v1 THEN the system SHALL accept requests from OpenAI client libraries
 2. WHEN the system receives an OpenAI-formatted request THEN it SHALL translate the request to AWS Bedrock format
 3. WHEN AWS Bedrock returns a response THEN the system SHALL translate it back to OpenAI-compatible format
 4. WHEN using langchain or openai-python libraries THEN they SHALL work without modification
@@ -52,14 +52,15 @@ This feature implements an OpenAI-compatible API proxy that translates OpenAI AP
 
 ### Requirement 5
 
-**User Story:** As a security-conscious user, I want to authenticate using AWS bearer tokens, so that access is controlled through AWS IAM policies.
+**User Story:** As a security-conscious user, I want to authenticate using Bedrock API tokens directly in the Authorization header, so that access is controlled through Bedrock-specific authentication tokens.
 
 #### Acceptance Criteria
 
-1. WHEN a request includes OPENAI_API_KEY with AWS bearer token THEN the system SHALL validate the token
-2. WHEN authentication fails THEN the system SHALL return appropriate HTTP error codes
-3. WHEN authentication succeeds THEN the request SHALL be forwarded to AWS Bedrock
-4. IF the bearer token is invalid THEN the system SHALL reject the request with 401 Unauthorized
+1. WHEN a request includes Authorization header with Bearer AWS_BEARER_TOKEN_BEDROCK THEN the system SHALL validate the token format
+2. WHEN the AWS bearer token is in Bedrock API key format (e.g., "bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29tLz9BY3Rpb249Q2FsbFdpdGhCZWFyZXJUb2tlbiZYLUFte......") THEN the system SHALL pass it directly to the Bedrock service as an environment variable
+3. WHEN authentication fails THEN the system SHALL return appropriate HTTP error codes
+4. WHEN authentication succeeds THEN the request SHALL be forwarded to AWS Bedrock using the provided token
+5. IF the bearer token format is invalid THEN the system SHALL reject the request with 401 Unauthorized
 
 ### Requirement 6
 

@@ -1,8 +1,7 @@
-import { 
-  OpenAIChatCompletionRequest, 
+import {
+  OpenAIChatCompletionRequest,
   OpenAIChatCompletionResponse,
   ClaudeRequest,
-  ClaudeResponse,
   BedrockConverseRequest,
   ProviderConfig,
   ModelMapping,

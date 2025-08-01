@@ -6,10 +6,10 @@ set -e
 
 # Default values
 ENVIRONMENT="dev"
-REGION="us-east-1"
+REGION="ap-northeast-1"
 STACK_NAME=""
-DOMAIN_NAME=""
-CERTIFICATE_ARN=""
+DOMAIN_NAME="openai.xxx.xxx"
+CERTIFICATE_ARN="arn:aws:acm:us-east-1:xxxxxxxxxxxxx:certificate/xxxxxxx"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -81,6 +81,11 @@ npm run build
 echo "✅ Validating SAM template..."
 sam validate --region $REGION
 
+# Create S3 bucket if it doesn't exist
+S3_BUCKET="bedrock-openai-proxy-sam-artifacts-$ENVIRONMENT"
+echo "📦 Ensuring S3 bucket exists: $S3_BUCKET"
+aws s3 mb s3://$S3_BUCKET --region $REGION 2>/dev/null || echo "Bucket already exists or creation failed"
+
 # Build SAM application
 echo "🔨 Building SAM application..."
 sam build --region $REGION
@@ -88,11 +93,15 @@ sam build --region $REGION
 # Deploy with SAM
 echo "🚀 Deploying to AWS..."
 
-DEPLOY_PARAMS="--stack-name $STACK_NAME --region $REGION --capabilities CAPABILITY_IAM --parameter-overrides Environment=$ENVIRONMENT"
+DEPLOY_PARAMS="--stack-name $STACK_NAME --region $REGION --capabilities CAPABILITY_IAM --s3-bucket $S3_BUCKET --parameter-overrides Environment=$ENVIRONMENT"
 
 if [ -n "$DOMAIN_NAME" ]; then
   DEPLOY_PARAMS="$DEPLOY_PARAMS DomainName=$DOMAIN_NAME CertificateArn=$CERTIFICATE_ARN"
 fi
+
+# Clean any cached configuration and deploy
+echo "Cleaning SAM cache..."
+rm -rf .aws-sam/
 
 sam deploy $DEPLOY_PARAMS --no-confirm-changeset
 

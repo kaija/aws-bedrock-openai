@@ -62,12 +62,12 @@ export interface ProviderFactory {
 export interface Provider {
   name: string;
   config: ProviderConfig;
-  
+
   // Core methods
   chatCompletion(request: ProviderRequest): Promise<ProviderResponse>;
   listModels(): Promise<string[]>;
   validateModel(modelId: string): boolean;
-  
+
   // Optional methods
   streamChatCompletion?(request: ProviderRequest): AsyncIterable<any>;
   getModelInfo?(modelId: string): Promise<any>;

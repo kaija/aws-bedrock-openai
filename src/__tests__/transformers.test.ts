@@ -66,7 +66,7 @@ describe('Request Transformers', () => {
     expect(validateOpenAIRequest(invalidRequest).isValid).toBe(false);
     expect(validateOpenAIRequest(invalidRoleRequest).isValid).toBe(false);
     expect(validateOpenAIRequest(invalidTemperatureRequest).isValid).toBe(false);
-    
+
     // Check error details
     const roleValidation = validateOpenAIRequest(invalidRoleRequest);
     expect(roleValidation.details?.messageIndex).toBe(0);
