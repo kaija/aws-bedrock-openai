@@ -48,6 +48,19 @@ npm run build
 ./scripts/deploy.sh --environment prod --domain openai.yourdomain.com --certificate arn:aws:acm:region:account:certificate/cert-id
 ```
 
+### 4. Destroy (when needed)
+
+```bash
+# Destroy dev environment
+./scripts/destroy.sh
+
+# Destroy production environment (requires confirmation)
+./scripts/destroy.sh --environment prod
+
+# Force destroy without prompts
+./scripts/destroy.sh --environment staging --force
+```
+
 ### 4. Test the API
 
 ```bash
