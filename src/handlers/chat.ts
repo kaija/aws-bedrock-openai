@@ -67,6 +67,13 @@ export class ChatHandler {
         );
       }
 
+      // Debug: Print auth result token for troubleshooting
+      if (authResult.bedrockApiToken) {
+        console.log('[DEBUG] ChatHandler.handleChatCompletion - Using bedrockApiToken:', authResult.bedrockApiToken.substring(0, 20) + '...');
+      } else {
+        console.log('[DEBUG] ChatHandler.handleChatCompletion - No bedrockApiToken in authResult');
+      }
+
       // Create Bedrock service with authenticated API token
       const bedrockService = new BedrockService(undefined, authResult.bedrockApiToken);
 
@@ -164,6 +171,13 @@ export class ChatHandler {
           `Provider ${providerResult.provider} is not yet supported. Currently only AWS Bedrock is supported.`,
           'invalid_request_error'
         );
+      }
+
+      // Debug: Print auth result token for troubleshooting
+      if (authResult.bedrockApiToken) {
+        console.log('[DEBUG] ChatHandler.handleClaudeNative - Using bedrockApiToken:', authResult.bedrockApiToken.substring(0, 20) + '...');
+      } else {
+        console.log('[DEBUG] ChatHandler.handleClaudeNative - No bedrockApiToken in authResult');
       }
 
       // Create Bedrock service with authenticated API token

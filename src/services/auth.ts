@@ -43,6 +43,10 @@ export class AuthService {
       }
 
       this.logger.logAuth(true, 'Bedrock API token successfully validated');
+
+      // Debug: Print the validated token for troubleshooting
+      console.log('[DEBUG] AuthService.authenticate - Token validated:', tokenResult.bedrockApiToken!.substring(0, 20) + '...');
+
       return {
         isValid: true,
         userId: this.extractUserIdFromToken(tokenResult.bedrockApiToken!),
@@ -77,6 +81,9 @@ export class AuthService {
 
       // Basic validation - token should not be empty
       if (bedrockApiToken.length > 0) {
+        // Debug: Print extracted token for troubleshooting
+        console.log('[DEBUG] AuthService.extractBedrockApiToken - Extracted token:', bedrockApiToken.substring(0, 20) + '...');
+
         return {
           isValid: true,
           bedrockApiToken: bedrockApiToken
@@ -134,6 +141,9 @@ export class AuthService {
       // Set the API token as an environment variable for the Bedrock client
       process.env.AWS_BEARER_TOKEN_BEDROCK = authResult.bedrockApiToken;
       this.logger.debug('Bedrock API token set in environment');
+
+      // Debug: Print the token for troubleshooting
+      console.log('[DEBUG] AWS_BEARER_TOKEN_BEDROCK set:', authResult.bedrockApiToken.substring(0, 20) + '...');
     }
   }
 

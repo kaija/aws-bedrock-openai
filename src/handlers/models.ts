@@ -88,25 +88,27 @@ export class ModelsHandler {
       const models: OpenAIModel[] = [];
       const currentTime = Math.floor(Date.now() / 1000);
 
-      // Add models from mappings (these are the OpenAI-compatible names)
+      // TEMPORARILY DISABLED: Add models from mappings (these are the OpenAI-compatible names)
       for (const [openaiModel, bedrockModel] of Object.entries(modelMappings)) {
-        if (allowedModels.includes(bedrockModel)) {
-          models.push({
-            id: openaiModel,
-            object: 'model',
-            created: currentTime,
-            owned_by: this.getModelOwner(bedrockModel),
-            root: openaiModel,
-            parent: undefined
-          });
-        }
+        // TEMP: Bypass allowed models check - if (allowedModels.includes(bedrockModel)) {
+        console.log('[DEBUG] TEMP: Bypassing allowed models check for:', openaiModel, '->', bedrockModel);
+        models.push({
+          id: openaiModel,
+          object: 'model',
+          created: currentTime,
+          owned_by: this.getModelOwner(bedrockModel),
+          root: openaiModel,
+          parent: undefined
+        });
+        // }
       }
 
-      // Add direct Bedrock models that are allowed
+      // TEMPORARILY DISABLED: Add direct Bedrock models that are allowed
       for (const bedrockModel of allowedModels) {
         // Only add if not already included via mapping
         const alreadyMapped = Object.values(modelMappings).includes(bedrockModel);
         if (!alreadyMapped) {
+          console.log('[DEBUG] TEMP: Adding allowed Bedrock model:', bedrockModel);
           models.push({
             id: bedrockModel,
             object: 'model',

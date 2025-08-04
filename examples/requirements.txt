@@ -1,0 +1,3 @@
+# Python dependencies for Bedrock OpenAI Proxy examples
+httpx>=0.25.0
+asyncio-compat>=0.1.0

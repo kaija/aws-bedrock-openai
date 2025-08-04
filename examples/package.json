@@ -1,0 +1,28 @@
+{
+  "name": "bedrock-openai-proxy-examples",
+  "version": "1.0.0",
+  "description": "Examples for Bedrock OpenAI Proxy",
+  "main": "nodejs_bedrock_direct.js",
+  "scripts": {
+    "direct": "node nodejs_bedrock_direct.js",
+    "sync": "python3 python_sync_client.py",
+    "async": "python3 python_httpx_client.py",
+    "install-python-deps": "pip3 install httpx asyncio",
+    "test-all": "npm run direct && npm run sync && npm run async"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.857.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "keywords": [
+    "aws",
+    "bedrock",
+    "openai",
+    "examples",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT"
+}

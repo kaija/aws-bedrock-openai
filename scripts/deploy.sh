@@ -8,8 +8,8 @@ set -e
 ENVIRONMENT="dev"
 REGION="ap-northeast-1"
 STACK_NAME=""
-DOMAIN_NAME="openai.ez2.click"
-CERTIFICATE_ARN="arn:aws:acm:us-east-1:313906465919:certificate/48fcecba-27bf-4346-8ffa-853ada12682a"
+DOMAIN_NAME="openai.example.com"
+CERTIFICATE_ARN="arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-5678-9012-345678901234"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

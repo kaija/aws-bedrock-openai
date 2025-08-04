@@ -33,13 +33,37 @@ export class BedrockService {
       region: region || process.env.AWS_REGION || 'us-east-1',
     };
 
-    // Set the Bedrock API token as environment variable if provided
+    // Use middleware approach for bearer token authentication
     if (bedrockApiToken) {
-      process.env.AWS_BEARER_TOKEN_BEDROCK = bedrockApiToken;
+      // Disable the default signer
+      clientConfig.signer = {
+        sign: async (request: any) => request
+      };
     }
 
-    // The Bedrock client will automatically use the AWS_BEARER_TOKEN_BEDROCK environment variable
     this.client = new BedrockRuntimeClient(clientConfig);
+
+    // Add bearer token middleware if token is provided
+    if (bedrockApiToken) {
+      this.client.middlewareStack.add(
+        (next) => async (args: any) => {
+          // Delete any possible authorization headers
+          if (args.request.headers) {
+            delete args.request.headers.authorization;
+            delete args.request.headers.Authorization;
+          }
+
+          // Add the bearer token as header
+          args.request.headers.Authorization = `Bearer ${bedrockApiToken}`;
+
+          return next(args);
+        },
+        {
+          step: 'build',
+          name: 'addBearerTokenMiddleware'
+        }
+      );
+    }
   }
 
   /**
@@ -94,7 +118,6 @@ export class BedrockService {
         // Check if it's the inference profile error
         if (error.message?.includes("on-demand throughput isn't supported")) {
           const alternativeModelId = this.getInferenceProfileId(modelId);
-          console.log(`Retrying with alternative model: ${alternativeModelId}`);
 
           // Retry with alternative model
           try {
@@ -117,7 +140,6 @@ export class BedrockService {
             return this.convertFromConverseResponse(retryResponse, alternativeModelId);
 
           } catch (retryError: any) {
-            console.error('Retry with alternative model failed:', retryError);
             throw new BedrockError(
               `Model ${modelId} is not available. Please try a different model.`,
               400,
@@ -213,7 +235,6 @@ export class BedrockService {
         // Check if it's the inference profile error
         if (error.message?.includes("on-demand throughput isn't supported")) {
           const inferenceProfileId = this.getInferenceProfileId(modelId);
-          console.log(`Retrying with inference profile: ${inferenceProfileId}`);
 
           // Retry with inference profile
           try {
@@ -234,7 +255,6 @@ export class BedrockService {
             return JSON.parse(responseBody) as ClaudeResponse;
 
           } catch (retryError: any) {
-            console.error('Retry with inference profile failed:', retryError);
             throw new BedrockError(
               `Model ${modelId} is not available. Please try a different model.`,
               400,
@@ -378,7 +398,7 @@ export class BedrockService {
     const usage = response.usage || {};
 
     return {
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      id: `msg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
       type: 'message',
       role: 'assistant',
       model: modelId,
